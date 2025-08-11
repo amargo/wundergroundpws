@@ -18,6 +18,13 @@ from .const import (
     DEFAULT_TIMEOUT
 )
 
+# Multi-station constants
+CONF_INTEGRATION_TYPE = "integration_type"
+CONF_GROUP_NAME = "group_name"
+CONF_STATIONS = "stations"
+CONF_STATION_NAME = "station_name"
+CONF_STATION_PRIORITY = "station_priority"
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -26,6 +33,12 @@ class WundergrounPWSFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def __init__(self):
+        """Initialize the config flow."""
+        self._api_key = None
+        self._group_name = None
+        self._stations = []
+
     @staticmethod
     @callback
     def async_get_options_flow(config_entry):
@@ -33,7 +46,29 @@ class WundergrounPWSFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         return OptionsFlowHandler(config_entry)
 
     async def async_step_user(self, user_input=None):
-        """Handle a flow initiated by the user."""
+        """Handle the initial step - choose integration type."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_API_KEY): str,
+                    vol.Required(CONF_INTEGRATION_TYPE, default="single"): vol.In({
+                        "single": "Single Station",
+                        "multi": "Multi-Station (with fallback support)"
+                    })
+                })
+            )
+        
+        # Store API key for later use
+        self._api_key = user_input[CONF_API_KEY]
+        
+        if user_input[CONF_INTEGRATION_TYPE] == "multi":
+            return await self.async_step_multi_station()
+        else:
+            return await self.async_step_single_station()
+
+    async def async_step_single_station(self, user_input=None):
+        """Handle a single station setup."""
         if user_input is None:
             return await self._show_setup_form(user_input)
 
@@ -110,8 +145,9 @@ class WundergrounPWSFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(
                 title=station_id,
                 data={
-                    CONF_API_KEY: user_input[CONF_API_KEY],
+                    CONF_API_KEY: self._api_key,
                     CONF_PWS_ID: user_input[CONF_PWS_ID],
+                    CONF_INTEGRATION_TYPE: "single",
                 },
                 options={
                     CONF_LATITUDE: latitude,
@@ -123,13 +159,129 @@ class WundergrounPWSFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
                 },
             )
 
+    async def async_step_multi_station(self, user_input=None):
+        """Handle multi-station setup."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="multi_station",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_GROUP_NAME): str,
+                    vol.Optional(CONF_LATITUDE): cv.latitude,
+                    vol.Optional(CONF_LONGITUDE): cv.longitude,
+                })
+            )
+        
+        self._group_name = user_input[CONF_GROUP_NAME]
+        
+        # Check if group name already exists
+        await self.async_set_unique_id(f"multi_station_{self._group_name}")
+        self._abort_if_unique_id_configured()
+        
+        return await self.async_step_add_station()
+
+    async def async_step_add_station(self, user_input=None):
+        """Handle adding a weather station."""
+        if user_input is None:
+            return self.async_show_form(
+                step_id="add_station",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_PWS_ID): str,
+                    vol.Required(CONF_STATION_NAME): str,
+                    vol.Required(CONF_STATION_PRIORITY, default=len(self._stations) + 1): vol.All(int, vol.Range(min=1, max=10)),
+                }),
+                description_placeholders={
+                    "group_name": self._group_name,
+                    "station_count": len(self._stations),
+                },
+            )
+        
+        pws_id = user_input[CONF_PWS_ID]
+        station_name = user_input[CONF_STATION_NAME]
+        priority = user_input[CONF_STATION_PRIORITY]
+        
+        # Check if station ID already exists in this group
+        if any(station["pws_id"] == pws_id for station in self._stations):
+            return self.async_show_form(
+                step_id="add_station",
+                data_schema=vol.Schema({
+                    vol.Required(CONF_PWS_ID): str,
+                    vol.Required(CONF_STATION_NAME): str,
+                    vol.Required(CONF_STATION_PRIORITY, default=len(self._stations) + 1): vol.All(int, vol.Range(min=1, max=10)),
+                }),
+                errors={"base": "station_already_exists"},
+                description_placeholders={
+                    "group_name": self._group_name,
+                    "station_count": len(self._stations),
+                },
+            )
+        
+        self._stations.append({
+            CONF_PWS_ID: pws_id,
+            CONF_STATION_NAME: station_name,
+            CONF_STATION_PRIORITY: priority
+        })
+        
+        # Ask if user wants to add more stations
+        return await self.async_step_station_menu()
+
+    async def async_step_station_menu(self, user_input=None):
+        """Handle station menu selection."""
+        if user_input is None:
+            # Format station list with proper trimming and semicolon separation
+            station_names = [s[CONF_STATION_NAME].strip() for s in self._stations if s[CONF_STATION_NAME].strip()]
+            stations_display = "; ".join(station_names) if station_names else "None"
+            
+            return self.async_show_menu(
+                step_id="station_menu",
+                menu_options=["add_another_station", "finish_setup"],
+                description_placeholders={
+                    "stations": stations_display
+                }
+            )
+        
+        # Handle menu selection
+        if user_input == "add_another_station":
+            return await self.async_step_add_another_station()
+        elif user_input == "finish_setup":
+            return await self.async_step_finish_setup()
+        
+        # Default fallback
+        return await self.async_step_finish_setup()
+
+    async def async_step_add_another_station(self, user_input=None):
+        """Add another station."""
+        return await self.async_step_add_station()
+
+    async def async_step_finish_setup(self, user_input=None):
+        """Finish the multi-station setup."""
+        if len(self._stations) == 0:
+            return self.async_abort(reason="no_stations")
+
+        # Create the config entry
+        return self.async_create_entry(
+            title=f"Multi-Station {self._group_name}",
+            data={
+                CONF_API_KEY: self._api_key,
+                CONF_GROUP_NAME: self._group_name,
+                CONF_STATIONS: self._stations,
+                CONF_INTEGRATION_TYPE: "multi",
+            },
+            options={
+                CONF_LATITUDE: None,
+                CONF_LONGITUDE: None,
+                CONF_LANG: DEFAULT_LANG,
+                CONF_NUMERIC_PRECISION: DEFAULT_NUMERIC_PRECISION,
+                CONF_CALENDARDAYTEMPERATURE: DEFAULT_CALENDARDAYTEMPERATURE,
+                CONF_FORECAST_SENSORS: DEFAULT_FORECAST_SENSORS,
+            },
+        )
+
     async def _show_setup_form(self, errors=None):
         """Show the setup form to the user."""
         return self.async_show_form(
-            step_id="user",
+            step_id="single_station",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_API_KEY): str,
                     vol.Required(CONF_PWS_ID): str,
                 }
             ),
@@ -142,7 +294,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     def __init__(self, config_entry):
         """Initialize options flow."""
-        self.config_entry = config_entry
+        super().__init__()
 
     async def async_step_init(self, user_input=None):
         """Manage the options."""

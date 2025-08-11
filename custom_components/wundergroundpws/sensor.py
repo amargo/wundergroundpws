@@ -166,20 +166,49 @@ def _get_sensor_data(
         sensors: dict[str, Any],
         kind: str,
         unit_system: str,
-        feature: str | None = None,
+        feature: str,
         forecast_day: int | None = None
 ) -> Any:
     """Get sensor data."""
-    if feature == FEATURE_CONDITIONS:
-        return sensors[FIELD_OBSERVATIONS][0][unit_system][kind]
-    elif feature == FEATURE_FORECAST:
-        return sensors[kind][forecast_day]
-    elif feature == FEATURE_FORECAST_DAYPART:
-        return sensors[FIELD_DAYPART][0][kind][forecast_day]
-    elif feature == FEATURE_OBSERVATIONS:
-        return sensors[FIELD_OBSERVATIONS][0][kind]
-    else:
-        return sensors
+    try:
+        if not sensors:
+            return None
+            
+        if feature == FEATURE_CONDITIONS:
+            if FIELD_OBSERVATIONS not in sensors or not sensors[FIELD_OBSERVATIONS]:
+                return None
+            obs_data = sensors[FIELD_OBSERVATIONS][0]
+            if unit_system not in obs_data or not obs_data[unit_system]:
+                return None
+            value = obs_data[unit_system].get(kind)
+            return value if value is not None else None
+        elif feature == FEATURE_FORECAST:
+            if kind not in sensors or not sensors[kind]:
+                return None
+            if forecast_day >= len(sensors[kind]):
+                return None
+            value = sensors[kind][forecast_day]
+            return value if value is not None else None
+        elif feature == FEATURE_FORECAST_DAYPART:
+            if FIELD_DAYPART not in sensors or not sensors[FIELD_DAYPART] or not sensors[FIELD_DAYPART][0]:
+                return None
+            daypart_data = sensors[FIELD_DAYPART][0]
+            if kind not in daypart_data or not daypart_data[kind]:
+                return None
+            if forecast_day >= len(daypart_data[kind]):
+                return None
+            value = daypart_data[kind][forecast_day]
+            return value if value is not None else None
+        elif feature == FEATURE_OBSERVATIONS:
+            if FIELD_OBSERVATIONS not in sensors or not sensors[FIELD_OBSERVATIONS]:
+                return None
+            obs_data = sensors[FIELD_OBSERVATIONS][0]
+            value = obs_data.get(kind)
+            return value if value is not None else None
+        else:
+            return sensors
+    except (KeyError, IndexError, TypeError):
+        return None
 
 
 class WundergroundPWSForecastSensor(WundergroundPWSSensor):

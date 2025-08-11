@@ -1,4 +1,4 @@
-# Home-Assistant-Wundergroundpws v2.X.X
+# Home-Assistant-Wundergroundpws v2.1.0 + Multi-Station Support
   
 
 Home Assistant custom integration for Weather Underground personal weather station users.  
@@ -7,31 +7,37 @@ Current conditions are generated from the wundergroundpws configured station ID.
 Forecast is generated from the latitude/longitude retrieved from the wundergroundpws configured station ID.  
 The `wundergroundpws` platform uses [Weather Underground](http://www.wunderground.com) as a source for current weather information.  
 
+## NEW: Multi-Station Support with Fallback
+
+**Enhanced version with multi-station fallback support!**
+- **Multiple station management with priority**
+- **Automatic fallback** when a station goes offline
+- **Centralized weather entity** (e.g. `weather.velence`)
+- **Real-time station status** information
+- **Never stuck values** - automatic switching between stations
+
 :+1: If you find this software useful, feel free to make a donation: [Paypal.me Donation Link](https://paypal.me/cytecheng)  
 
-**v2.0.4 Upgrade notes:**  
-_requires Home Assistant version 2023.9 or greater._  
+**v2.0.4 + Multi-Station Upgrade notes:**  
+_requires Home Assistant version 2023.1 or greater._  
 _If the forecast is not displayed in the weather card after upgrading from v2.x.x to v2.0.4, edit the weather card in the dashboard and re-save it._  
 
 -------------------
 
-[Prerequisites](#installation-prerequisites)
+## Quick Navigation
 
-[Weather Underground PWS API Key](#weather-underground-pws-api-key)
+[Prerequisites](#installation-prerequisites) | [API Key](#weather-underground-pws-api-key) | [Installation](#installation) | [Multi-Station Setup](#multi-station-installation-guide) | [Configuration](#configure) | [Weather Entity](#weather-entity) | [Troubleshooting](#troubleshooting)
 
-[Installation](#installation)
+## Multi-Station vs Single Station
 
-[Upgrade](#upgrade)
-
-[Configure](#configure)
-
-[Description of terms and variables](#description-of-terms-and-variables)
-
-[Weather Entity](#weather-entity)
-
-[Statistics Card](#sensors-available-in-statistics)
-
-[Localization](#localization)
+| Feature | Single Station | Multi-Station (NEW) |
+|---------|---------------|-------------------|
+| Station Count | 1 | Multiple (2-10) |
+| Fallback Support |  | Automatic |
+| Stuck Values |  Can happen |  Never |
+| Entity Count | 1 per station | 1 centralized |
+| Priority Management |  |  Yes |
+| Status Monitoring |  |  Real-time |
 
 # Installation Prerequisites
 Please review the minimum requirements below to determine whether you will be able to
@@ -81,6 +87,128 @@ and submit.
 Multiple instances can be created by repeating the above steps with a different StationID and or/API Key.  
 Note that every instance requires it's own set of API calls, so be aware of exceeding the Weather Underground Personal API rate limit.  
 Each instance calls every 5 minutes or 288 times a day.  
+[Back to top](#top)
+
+# Multi-Station Installation Guide
+
+## Problem Solution
+
+Original WundergroundPWS integration issues:
+- ❌ When a station goes offline, values get stuck
+- ❌ No automatic fallback to other stations  
+- ❌ Separate entity needed for each station
+
+## New Multi-Station Solution
+
+- ✅ **Multiple station management with priority**
+- ✅ **Automatic fallback** when a station goes offline
+- ✅ **Centralized weather entity** (e.g. `weather.velence`)
+- ✅ **Real-time station status** information
+- ✅ **Unavailable status** when all stations are offline
+
+## Installation Steps
+
+### 1. Copy Files
+```bash
+# Copy the entire folder to Home Assistant config directory
+cp -r custom_components/wundergroundpws /config/custom_components/
+```
+
+### 2. Restart Home Assistant
+Restart Home Assistant for changes to take effect.
+
+### 3. Add Integration
+
+1. Go to **Settings** → **Devices & Services** → **Add Integration**
+2. Search for **"WundergroundPWS"** integration
+3. Select it
+
+## Configuration
+
+### Step 1: API Key and Type Selection
+- **API Key**: Your Weather Underground PWS API key
+- **Integration Type**: 
+  - "Single Station" - traditional mode
+  - "Multi-Station (with fallback support)" - new feature
+
+### Step 2A: Single Station (traditional)
+- **Station ID**: e.g. `IKPOLN1`
+
+### Step 2B: Multi-Station (recommended)
+1. **Group name**: e.g. `velence` (this will be the entity name: `weather.velence`)
+2. **Coordinates**: optional, auto-detected
+
+### Step 3: Add Stations (multi-station only)
+For each station provide:
+- **Station ID**: e.g. `IKPOLN1`, `IKPOLN2`, `IVELEN69`
+- **Friendly name**: e.g. "Velence Station 1"
+- **Priority**: 1 = highest, 10 = lowest
+
+### Example Configuration
+```
+API Key: your_api_key_here
+Group: velence
+
+Stations:
+1. IKPOLN1 - "Velence Station 1" - Priority: 1
+2. IKPOLN2 - "Velence Station 2" - Priority: 2  
+3. IVELEN69 - "Velence Station 3" - Priority: 3
+```
+
+## Usage
+
+### Lovelace Card
+```yaml
+type: horizontal-stack
+cards:
+  - type: custom:vertical-stack-in-card
+    cards:
+      - show_current: true
+        show_forecast: true
+        type: weather-forecast
+        entity: weather.velence  # Your group name
+        forecast_type: daily
+      - type: custom:weather-card
+        entity: weather.velence
+        current: false
+        details: true
+        forecast: true
+        hourly_forecast: true
+        number_of_forecasts: "3"
+        
+  # Station status card
+  - type: entities
+    title: Station Status
+    entities:
+      - entity: weather.velence
+        attribute: active_station
+        name: Active Station
+      - entity: weather.velence
+        attribute: active_station_name
+        name: Station Name
+```
+
+### Status Information
+Weather entity extra attributes:
+- `active_station`: Currently active station ID
+- `active_station_name`: Active station friendly name
+- `station_status`: All stations status
+- `group_name`: Group name
+
+## How It Works
+
+1. **Priority-based selection**: Uses the lowest priority (1) working station
+2. **Automatic fallback**: When active station goes offline, automatically switches to next working station
+3. **5-minute refresh**: Regularly checks all stations
+4. **Unavailable status**: When all stations are offline, entity becomes unavailable
+
+## Benefits
+
+- **Reliability**: Values never get stuck
+- **Simplicity**: One entity instead of multiple stations  
+- **Transparency**: See which station is active
+- **Flexibility**: Easy to add/remove stations
+
 [Back to top](#top)
 
 # Upgrade
@@ -417,4 +545,48 @@ Available lang: options are:
 'tk-TM', 'tl-PH', 'tr-TR', 'uk-UA', 'ur-PK', 'uz-UZ', 'vi-VN', 'zh-CN', 'zh-HK', 'zh-TW'
 ```
 Weather Entity (hass weather card) translations are handled by Home Assistant and configured under the user -> language setting.  
+[Back to top](#top)
+
+# Troubleshooting
+
+## Multi-Station Issues
+
+### Enable Logs
+```yaml
+logger:
+  logs:
+    custom_components.wundergroundpws.multi_station_coordinator: debug
+```
+
+### Common Issues
+
+**No Data**
+- Check API key
+- Check station IDs
+
+**Station Not Switching**  
+- Check priorities
+- Review logs
+
+**Unavailable**
+- Check that at least one station is online
+- Wait 5 minutes for next refresh
+
+## General Issues
+
+**Integration Not Found**
+- Ensure files are in `/config/custom_components/wundergroundpws/`
+- Restart Home Assistant
+- Check logs for errors
+
+**API Rate Limit**
+- Each station uses ~288 API calls per day
+- Multi-station uses same rate per station
+- Consider reducing number of stations if hitting limits
+
+**Sensor Values Stuck (Single Station)**
+- Consider upgrading to Multi-Station mode
+- Check station is online at wunderground.com
+- Restart integration
+
 [Back to top](#top)

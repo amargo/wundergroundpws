@@ -1,12 +1,12 @@
 {
   "domain": "wundergroundpws",
-  "name": "Wundergroundpws",
-  "version": "2.0.9",
-  "documentation": "https://github.com/cytech/Home-Assistant-wundergroundpws/",
-  "issue_tracker": "https://github.com/cytech/Home-Assistant-wundergroundpws/discussions/",
+  "name": "Wundergroundpws Multi-Station",
+  "version": "2.1.0",
+  "documentation": "https://github.com/amargo/wundergroundpws/",
+  "issue_tracker": "https://github.com/amargo/wundergroundpws/discussions/",
   "requirements": [],
   "dependencies": [],
-  "codeowners": ["@cytech"],
+  "codeowners": ["@amargo"],
   "config_flow": true,
   "iot_class": "cloud_polling"
 }

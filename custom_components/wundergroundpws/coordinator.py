@@ -14,33 +14,17 @@ from asyncio import timeout
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
-from homeassistant.util.unit_system import METRIC_SYSTEM
-from homeassistant.const import (
-    PERCENTAGE, UnitOfPressure, UnitOfTemperature, UnitOfLength, UnitOfSpeed, UnitOfVolumetricFlux)
+from .base_coordinator import BaseWundergroundPWSCoordinator, MIN_TIME_BETWEEN_UPDATES, _RESOURCECURRENT, _RESOURCEFORECAST, _RESOURCESHARED
 from .const import (
-    ICON_CONDITION_MAP,
     FIELD_OBSERVATIONS,
+    FIELD_LONGITUDE, 
+    FIELD_LATITUDE,
+    DEFAULT_TIMEOUT,
     FIELD_CONDITION_HUMIDITY,
-    FIELD_CONDITION_WINDDIR,
-    FIELD_DAYPART,
-    FIELD_FORECAST_VALIDTIMEUTC,
-    FIELD_FORECAST_TEMPERATUREMAX,
-    FIELD_FORECAST_TEMPERATUREMIN,
-    FIELD_FORECAST_CALENDARDAYTEMPERATUREMAX,
-    FIELD_FORECAST_CALENDARDAYTEMPERATUREMIN, FIELD_LONGITUDE, FIELD_LATITUDE,
-    DEFAULT_TIMEOUT
+    FIELD_CONDITION_WINDDIR
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-_RESOURCESHARED = '&format=json&apiKey={apiKey}&units={units}'
-_RESOURCECURRENT = ('https://api.weather.com/v2/pws/observations/current'
-                    '?stationId={stationId}')
-_RESOURCEFORECAST = ('https://api.weather.com/v3/wx/forecast/daily/5day'
-                     '?geocode={latitude},{longitude}')
-
-MIN_TIME_BETWEEN_UPDATES = timedelta(minutes=5)
 
 
 @dataclass
@@ -61,51 +45,35 @@ class WundergroundPWSUpdateCoordinatorConfig:
     tranfile: str
 
 
-class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
+class WundergroundPWSUpdateCoordinator(BaseWundergroundPWSCoordinator):
     """The WundergroundPWS update coordinator."""
-
-    icon_condition_map = ICON_CONDITION_MAP
 
     def __init__(
             self, hass: HomeAssistant, config: WundergroundPWSUpdateCoordinatorConfig
     ) -> None:
         """Initialize."""
-        self._hass = hass
-        self._api_key = config.api_key
         self._pws_id = config.pws_id
         self._numeric_precision = config.numeric_precision
-        self._unit_system_api = config.unit_system_api
         self.unit_system = config.unit_system
-        self._lang = config.lang
-        self._calendarday = config.calendarday
         self._latitude = config.latitude
         self._longitude = config.longitude
         self.forecast_enable = config.forecast_enable
-        self._features = set()
-        self.data = None
-        self._session = async_get_clientsession(self._hass)
         self._tranfile = config.tranfile
 
-        if self._unit_system_api == 'm':
-            self.units_of_measurement = (UnitOfTemperature.CELSIUS, UnitOfLength.MILLIMETERS, UnitOfLength.METERS,
-                                         UnitOfSpeed.KILOMETERS_PER_HOUR, UnitOfPressure.MBAR,
-                                         UnitOfVolumetricFlux.MILLIMETERS_PER_HOUR, PERCENTAGE)
-        else:
-            self.units_of_measurement = (UnitOfTemperature.FAHRENHEIT, UnitOfLength.INCHES, UnitOfLength.FEET,
-                                         UnitOfSpeed.MILES_PER_HOUR, UnitOfPressure.INHG,
-                                         UnitOfVolumetricFlux.INCHES_PER_HOUR, PERCENTAGE)
-
         super().__init__(
-            hass,
-            _LOGGER,
+            hass=hass,
             name="WundergroundPWSUpdateCoordinator",
+            api_key=config.api_key,
+            unit_system_api=config.unit_system_api,
+            lang=config.lang,
+            calendarday=config.calendarday,
             update_interval=config.update_interval,
         )
+        
+        # Initialize session after super().__init__() so self.hass is available
+        self._session = async_get_clientsession(self.hass)
 
-    @property
-    def is_metric(self):
-        """Determine if this is the metric unit system."""
-        return self._hass.config.units is METRIC_SYSTEM
+
 
     @property
     def pws_id(self):
@@ -188,11 +156,8 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
                 ])
             )
 
-    def request_feature(self, feature):
-        """Register feature to be fetched from WU API."""
-        self._features.add(feature)
-
     def get_condition(self, field):
+        """Override base method to handle unit system specific fields."""
         if field in [
             FIELD_CONDITION_HUMIDITY,
             FIELD_CONDITION_WINDDIR,
@@ -200,29 +165,6 @@ class WundergroundPWSUpdateCoordinator(DataUpdateCoordinator):
             # Those fields are unit-less
             return self.data[FIELD_OBSERVATIONS][0][field] or 0
         return self.data[FIELD_OBSERVATIONS][0][self.unit_system][field]
-
-    def get_forecast(self, field, period=0):
-        try:
-            if field in [
-                FIELD_FORECAST_TEMPERATUREMAX,
-                FIELD_FORECAST_TEMPERATUREMIN,
-                FIELD_FORECAST_CALENDARDAYTEMPERATUREMAX,
-                FIELD_FORECAST_CALENDARDAYTEMPERATUREMIN,
-                FIELD_FORECAST_VALIDTIMEUTC,
-            ]:
-                # Those fields exist per-day, rather than per dayPart, so the period is halved
-                return self.data[field][int(period / 2)]
-            return self.data[FIELD_DAYPART][0][field][period]
-        except IndexError:
-            return None
-
-    @classmethod
-    def _iconcode_to_condition(cls, icon_code):
-        for condition, iconcodes in cls.icon_condition_map.items():
-            if icon_code in iconcodes:
-                return condition
-        _LOGGER.warning(f'Unmapped iconCode from TWC Api. (44 is Not Available (N/A)) "{icon_code}". ')
-        return None
 
 
 class InvalidApiKey(HomeAssistantError):
