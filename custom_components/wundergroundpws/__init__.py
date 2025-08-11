@@ -150,8 +150,8 @@ async def _async_setup_multi_station_entry(hass: HomeAssistant, entry: ConfigEnt
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
-    # For multi-station, we only set up the weather platform
-    await hass.config_entries.async_forward_entry_setups(entry, [Platform.WEATHER])
+    # Set up both weather and sensor platforms for multi-station
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 

@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util.unit_system import METRIC_SYSTEM
 
 from .coordinator import WundergroundPWSUpdateCoordinator
+from .multi_station_coordinator import MultiStationUpdateCoordinator
 
 from .const import (
     CONF_ATTRIBUTION, DOMAIN, FIELD_DAYPART, FIELD_OBSERVATIONS, MAX_FORECAST_DAYS,
@@ -42,25 +43,44 @@ async def async_setup_entry(
         hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Add WundergroundPWS entities from a config_entry."""
-    coordinator: WundergroundPWSUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    sensors = [
-        WundergroundPWSSensor(coordinator, description) for description in SENSOR_DESCRIPTIONS
-    ]
+    coordinator = hass.data[DOMAIN][entry.entry_id]
+    sensors = []
+    
+    # Handle both single-station and multi-station coordinators
+    if isinstance(coordinator, MultiStationUpdateCoordinator):
+        # For multi-station: create unified sensors using group name
+        sensors = [
+            MultiStationWundergroundPWSSensor(coordinator, description) 
+            for description in SENSOR_DESCRIPTIONS
+        ]
+        
+        if coordinator.forecast_enable:
+            sensors.extend(
+                MultiStationWundergroundPWSForecastSensor(coordinator, description, forecast_day=day)
+                for day in range(MAX_FORECAST_DAYS)
+                for description in FORECAST_SENSOR_DESCRIPTIONS
+                if description.feature == FEATURE_FORECAST
+            )
+    else:
+        # For single-station: create sensors normally
+        sensors = [
+            WundergroundPWSSensor(coordinator, description) for description in SENSOR_DESCRIPTIONS
+        ]
 
-    if coordinator.forecast_enable:
-        sensors.extend(
-            WundergroundPWSForecastSensor(coordinator, description, forecast_day=day)
-            for day in range(MAX_FORECAST_DAYS)
-            for description in FORECAST_SENSOR_DESCRIPTIONS
-            if description.feature == FEATURE_FORECAST
-        )
+        if coordinator.forecast_enable:
+            sensors.extend(
+                WundergroundPWSForecastSensor(coordinator, description, forecast_day=day)
+                for day in range(MAX_FORECAST_DAYS)
+                for description in FORECAST_SENSOR_DESCRIPTIONS
+                if description.feature == FEATURE_FORECAST
+            )
 
-        sensors.extend(
-            WundergroundPWSForecastSensor(coordinator, description, forecast_day=day)
-            for day in range(MAX_FORECAST_DAYS * 2)
-            for description in FORECAST_SENSOR_DESCRIPTIONS
-            if description.feature == FEATURE_FORECAST_DAYPART
-        )
+            sensors.extend(
+                WundergroundPWSForecastSensor(coordinator, description, forecast_day=day)
+                for day in range(MAX_FORECAST_DAYS * 2)
+                for description in FORECAST_SENSOR_DESCRIPTIONS
+                if description.feature == FEATURE_FORECAST_DAYPART
+            )
 
     async_add_entities(sensors)
 
@@ -227,3 +247,86 @@ class WundergroundPWSForecastSensor(WundergroundPWSSensor):
             self.forecast_day
         )
         self.async_write_ha_state()
+
+
+class MultiStationWundergroundPWSSensor(CoordinatorEntity, SensorEntity):
+    """Multi-station WundergroundPWS sensor using active station data."""
+    _attr_has_entity_name = True
+    _attr_attribution = CONF_ATTRIBUTION
+    entity_description: WundergroundPWSSensorEntityDescription
+
+    def __init__(
+            self,
+            coordinator: MultiStationUpdateCoordinator,
+            description: WundergroundPWSSensorEntityDescription,
+    ):
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{coordinator.group_name}_{description.key}".lower()
+        self._unit_system = coordinator.unit_system
+
+    @property
+    def name(self) -> str:
+        """Return the name of the sensor."""
+        return f"{self.coordinator.group_name} {self.entity_description.name}"
+
+    @property
+    def native_value(self) -> StateType:
+        """Return the state of the sensor from active station."""
+        try:
+            # Always use the coordinator's get_condition method for multi-station
+            # This ensures we get data from the active station
+            return self.coordinator.get_condition(self.entity_description.key)
+        except (TypeError, KeyError, AttributeError):
+            return None
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        """Return the unit of measurement."""
+        if hasattr(self.entity_description, 'unit_fn'):
+            return self.entity_description.unit_fn(self.coordinator.is_metric)
+        return getattr(self.entity_description, 'native_unit_of_measurement', None)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Return additional state attributes."""
+        attrs = {}
+        
+        if hasattr(self.entity_description, 'attr_fn'):
+            try:
+                attrs.update(self.entity_description.attr_fn(self.coordinator.data))
+            except (TypeError, KeyError, AttributeError):
+                pass
+        
+        # Add active station information
+        if self.coordinator.active_station:
+            attrs.update({
+                "active_station": self.coordinator.active_station.pws_id,
+                "active_station_name": self.coordinator.active_station.name,
+            })
+        
+        attrs.update({
+            "group_name": self.coordinator.group_name,
+            "station_status": self.coordinator.station_status,
+        })
+        
+        return attrs if attrs else None
+
+
+class MultiStationWundergroundPWSForecastSensor(MultiStationWundergroundPWSSensor):
+    """Multi-station WundergroundPWS forecast sensor using active station data."""
+
+    def __init__(
+            self,
+            coordinator: MultiStationUpdateCoordinator,
+            description: WundergroundPWSSensorEntityDescription,
+            forecast_day: int,
+    ):
+        super().__init__(coordinator, description)
+        self.forecast_day = forecast_day
+        self._attr_unique_id = f"{coordinator.group_name}_{description.key}_{forecast_day}f".lower()
+
+    @property
+    def name(self) -> str:
+        """Return the name of the forecast sensor."""
+        return f"{self.coordinator.group_name} {self.entity_description.name} Day {self.forecast_day}"

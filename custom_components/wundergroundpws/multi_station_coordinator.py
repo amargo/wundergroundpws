@@ -82,7 +82,7 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
 
         super().__init__(
             hass=hass,
-            name="MultiStationWundergroundPWSUpdateCoordinator",
+            name="MultiStationUpdateCoordinator",
             api_key=config.api_key,
             unit_system_api=config.unit_system_api,
             lang=config.lang,
@@ -265,14 +265,42 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
 
     def get_condition(self, field):
         """Get condition from the active station data."""
-        if not self.data:
+        if not self.data or FIELD_OBSERVATIONS not in self.data:
             return None
+            
+        observations = self.data[FIELD_OBSERVATIONS]
+        if not observations or len(observations) == 0:
+            return None
+            
+        observation = observations[0]
         
-        if field in [
-            FIELD_CONDITION_HUMIDITY,
-            FIELD_CONDITION_WINDDIR,
-        ]:
-            # Those fields are unit-less
-            return self.data[FIELD_OBSERVATIONS][0].get(field) or 0
+        # Unit-less fields (directly from observation)
+        unit_less_fields = [
+            'humidity',           # FIELD_CONDITION_HUMIDITY
+            'winddir',           # FIELD_CONDITION_WINDDIR  
+            'solarRadiation',    # solar radiation
+            'uv',                # UV index
+            'stationID',         # station ID
+            'neighborhood',      # neighborhood name
+            'obsTimeLocal',      # local observation time
+            'obsTimeUtc',        # UTC observation time
+            'softwareType',      # software type
+            'country',           # country
+            'lon',               # longitude
+            'lat',               # latitude
+            'realtimeFrequency', # realtime frequency
+            'epoch',             # epoch time
+            'qcStatus',          # QC status
+            'windDirectionCardinal', # wind direction cardinal
+        ]
         
-        return self.data[FIELD_OBSERVATIONS][0].get(self.unit_system, {}).get(field)
+        if field in unit_less_fields:
+            return observation.get(field)
+        
+        # Metric/Imperial fields (from metric/imperial sub-object)
+        metric_data = observation.get(self.unit_system, {})
+        if metric_data and field in metric_data:
+            return metric_data.get(field)
+            
+        # Fallback: try to get from observation directly
+        return observation.get(field)
