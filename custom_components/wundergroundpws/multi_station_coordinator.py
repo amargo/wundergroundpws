@@ -79,6 +79,9 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
         self._tranfile = config.tranfile
         self._station_data = {}  # Store data from each station
         self._active_station = None  # Currently active station
+        self._station_failures = {}  # Track consecutive failures per station
+        self._excluded_stations = set()  # Temporarily excluded stations
+        self._max_consecutive_failures = 5  # Exclude after 5 consecutive failures
 
         super().__init__(
             hass=hass,
@@ -102,6 +105,15 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
         """Return the currently active station."""
         return self._active_station
 
+    def reset_excluded_stations(self):
+        """Reset all excluded stations and failure counters."""
+        excluded_count = len(self._excluded_stations)
+        self._excluded_stations.clear()
+        self._station_failures.clear()
+        if excluded_count > 0:
+            _LOGGER.info(f"Reset {excluded_count} excluded stations - all stations will be retried")
+        return excluded_count
+
     @property
     def station_status(self):
         """Return status of all stations."""
@@ -111,7 +123,9 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
                 'priority': station.priority,
                 'active': station.pws_id == self._active_station.pws_id if self._active_station else False,
                 'last_update': self._station_data.get(station.pws_id, {}).get('last_update'),
-                'status': 'online' if station.pws_id in self._station_data else 'offline'
+                'status': 'excluded' if station.pws_id in self._excluded_stations else ('online' if station.pws_id in self._station_data else 'offline'),
+                'consecutive_failures': self._station_failures.get(station.pws_id, 0),
+                'excluded': station.pws_id in self._excluded_stations
             }
             for station in self._stations
         }
@@ -131,13 +145,29 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
         
         # Try to fetch data from all stations
         for station in self._stations:
+            # Skip excluded stations
+            if station.pws_id in self._excluded_stations:
+                _LOGGER.debug(f"Skipping excluded station {station.pws_id}")
+                continue
+                
             try:
                 station_data = await self._fetch_station_data(station, headers)
                 if station_data:
                     successful_stations.append((station, station_data))
+                    # Reset failure counter on success
+                    self._station_failures[station.pws_id] = 0
                     _LOGGER.debug(f"Successfully fetched data from station {station.pws_id}")
             except Exception as err:
-                _LOGGER.warning(f"Failed to fetch data from station {station.pws_id}: {err}")
+                # Track consecutive failures
+                self._station_failures[station.pws_id] = self._station_failures.get(station.pws_id, 0) + 1
+                
+                # Check if station should be excluded
+                if self._station_failures[station.pws_id] >= self._max_consecutive_failures:
+                    self._excluded_stations.add(station.pws_id)
+                    _LOGGER.warning(f"Station {station.pws_id} excluded after {self._max_consecutive_failures} consecutive failures. Will retry after restart.")
+                else:
+                    _LOGGER.error(f"Failed to fetch data from station {station.pws_id} ({self._station_failures[station.pws_id]}/{self._max_consecutive_failures}): {err}")
+                
                 # Remove failed station from cache
                 self._station_data.pop(station.pws_id, None)
 
@@ -215,16 +245,15 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
             return result
 
         except Exception as err:
-            _LOGGER.error(f"Error fetching data from station {station.pws_id}: {err}")
-            # Log the actual URL for debugging
+            # Don't log error here - it's handled in the calling method
+            # Log the actual URL for debugging only in debug mode
             try:
                 current_url = self._build_url(_RESOURCECURRENT, station.pws_id)
                 forecast_url = self._build_url(_RESOURCEFORECAST, station.pws_id)
-                _LOGGER.debug(f"Current URL: {current_url}")
-                _LOGGER.debug(f"Forecast URL: {forecast_url}")
+                _LOGGER.debug(f"URLs for {station.pws_id} - Current: {current_url}, Forecast: {forecast_url}")
             except Exception as url_err:
-                _LOGGER.error(f"Error building URLs for {station.pws_id}: {url_err}")
-            return None
+                _LOGGER.debug(f"Error building URLs for {station.pws_id}: {url_err}")
+            raise err
 
     def _build_url(self, baseurl, station_id):
         """Build URL for API request."""

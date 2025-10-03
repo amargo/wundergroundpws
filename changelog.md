@@ -1,3 +1,11 @@
+v2.1.2  
+**Station Exclusion Logic** - Multi-station integration now temporarily excludes stations after 5 consecutive failures to reduce error spam  
+- Progressive error logging with failure counter (1/5, 2/5, etc.)  
+- Automatic exclusion until restart after 5 failures  
+- Added `wundergroundpws.reset_excluded_stations` service for manual reset  
+- Enhanced station status monitoring with exclusion information  
+- Improved logging to reduce repetitive error messages  
+
 v2.0.9  
 replace removed python async_timeout.timeout with asyncio.timeout  
 addresses issues in discussion #s  [260](https://github.com/cytech/Home-Assistant-wundergroundpws/discussions/260) and [261](https://github.com/cytech/Home-Assistant-wundergroundpws/discussions/261)

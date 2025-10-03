@@ -2,6 +2,7 @@
 import logging
 import os.path
 from typing import Final
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     CONF_API_KEY,
@@ -152,6 +153,20 @@ async def _async_setup_multi_station_entry(hass: HomeAssistant, entry: ConfigEnt
 
     # Set up both weather and sensor platforms for multi-station
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    
+    # Register service to reset excluded stations
+    async def reset_excluded_stations_service(call):
+        """Service to reset excluded stations."""
+        reset_count = coordinator.reset_excluded_stations()
+        _LOGGER.info(f"Service call: Reset {reset_count} excluded stations")
+    
+    hass.services.async_register(
+        DOMAIN, 
+        "reset_excluded_stations", 
+        reset_excluded_stations_service,
+        schema=vol.Schema({})
+    )
+    
     return True
 
 
@@ -160,6 +175,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)
+        
+        # Remove service if this was a multi-station entry
+        if entry.data.get("integration_type") == "multi_station":
+            if hass.services.has_service(DOMAIN, "reset_excluded_stations"):
+                hass.services.async_remove(DOMAIN, "reset_excluded_stations")
 
     return unload_ok
 

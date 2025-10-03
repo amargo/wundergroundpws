@@ -1,4 +1,4 @@
-# WundergroundPWS v2.1.1 - Multi-Station Support
+# WundergroundPWS v2.1.2 - Multi-Station Support
 
 Home Assistant custom integration for Weather Underground personal weather stations with **automatic fallback support**.
 
@@ -143,7 +143,6 @@ cards:
 ```
 
 ### Status Information
-Weather entity extra attributes:
 - `active_station`: Currently active station ID
 - `active_station_name`: Active station friendly name
 - `station_status`: All stations status
@@ -154,12 +153,13 @@ Weather entity extra attributes:
 1. **Priority-based selection**: Uses the lowest priority (1) working station
 2. **Automatic fallback**: When active station goes offline, automatically switches to next working station
 3. **5-minute refresh**: Regularly checks all stations
-4. **Unavailable status**: When all stations are offline, entity becomes unavailable
+4. **Smart exclusion**: Stations with 5+ consecutive failures are temporarily excluded until restart
+5. **Unavailable status**: When all stations are offline, entity becomes unavailable
 
 ## Benefits
 
 - **Reliability**: Values never get stuck
-- **Simplicity**: One entity instead of multiple stations  
+- **Simplicity**: One entity instead of multiple stations
 - **Transparency**: See which station is active
 - **Flexibility**: Easy to add/remove stations
 
@@ -437,6 +437,12 @@ logger:
 **Unavailable**
 - Check that at least one station is online
 - Wait 5 minutes for next refresh
+
+**Station Excluded (Too Many Errors)**
+- Stations with 5+ consecutive failures are temporarily excluded
+- Check station is online at wunderground.com
+- Use service `wundergroundpws.reset_excluded_stations` to manually reset
+- Or restart Home Assistant to reset all exclusions
 
 ## General Issues
 
