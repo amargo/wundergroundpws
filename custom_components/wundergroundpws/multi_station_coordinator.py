@@ -28,8 +28,13 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class StationHttpError(Exception):
+    """HTTP error wrapper to carry status code and phase for station fetches."""
 
-
+    def __init__(self, status: int, message: str = "", phase: str | None = None) -> None:
+        super().__init__(f"HTTP {status}: {message}")
+        self.status = status
+        self.phase = phase
 
 
 @dataclass
@@ -158,16 +163,24 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
                     self._station_failures[station.pws_id] = 0
                     _LOGGER.debug(f"Successfully fetched data from station {station.pws_id}")
             except Exception as err:
-                # Track consecutive failures
-                self._station_failures[station.pws_id] = self._station_failures.get(station.pws_id, 0) + 1
-                
-                # Check if station should be excluded
-                if self._station_failures[station.pws_id] >= self._max_consecutive_failures:
-                    self._excluded_stations.add(station.pws_id)
-                    _LOGGER.warning(f"Station {station.pws_id} excluded after {self._max_consecutive_failures} consecutive failures. Will retry after restart.")
+                # Only increment exclusion counter for HTTP 204 from CURRENT endpoint
+                should_count = isinstance(err, StationHttpError) and getattr(err, 'status', None) == 204 and getattr(err, 'phase', None) == 'current'
+
+                if should_count:
+                    self._station_failures[station.pws_id] = self._station_failures.get(station.pws_id, 0) + 1
+                    # Check if station should be excluded
+                    if self._station_failures[station.pws_id] >= self._max_consecutive_failures:
+                        self._excluded_stations.add(station.pws_id)
+                        _LOGGER.warning(f"Station {station.pws_id} excluded after {self._max_consecutive_failures} consecutive HTTP 204 responses. Will retry after restart.")
+                    else:
+                        _LOGGER.error(
+                            f"Failed to fetch data from station {station.pws_id} "
+                            f"({self._station_failures[station.pws_id]}/{self._max_consecutive_failures} due to HTTP 204): {err}"
+                        )
                 else:
-                    _LOGGER.error(f"Failed to fetch data from station {station.pws_id} ({self._station_failures[station.pws_id]}/{self._max_consecutive_failures}): {err}")
-                
+                    # Do not increment exclusion counter for non-204 or forecast errors
+                    _LOGGER.warning(f"Non-exclusion failure for station {station.pws_id}: {err}")
+
                 # Remove failed station from cache
                 self._station_data.pop(station.pws_id, None)
 
@@ -201,7 +214,8 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
                 
                 # Check HTTP status first
                 if response.status != 200:
-                    raise ValueError(f'HTTP {response.status}: {await response.text()}')
+                    # Count only 204 for exclusion in caller; still raise for others
+                    raise StationHttpError(response.status, await response.text(), phase='current')
                 
                 result_current = await response.json()
                 
@@ -227,7 +241,8 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
                 
                 # Check HTTP status first
                 if response.status != 200:
-                    raise ValueError(f'HTTP {response.status}: {await response.text()}')
+                    # Forecast HTTP errors should not count toward exclusion
+                    raise StationHttpError(response.status, await response.text(), phase='forecast')
                 
                 result_forecast = await response.json()
 
