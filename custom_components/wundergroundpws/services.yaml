@@ -1,0 +1,3 @@
+reset_excluded_stations:
+  name: Reset excluded stations
+  description: Retry stations that were excluded after repeated HTTP 204 (no data) responses.

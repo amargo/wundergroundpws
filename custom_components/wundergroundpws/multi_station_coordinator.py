@@ -173,7 +173,8 @@ class MultiStationUpdateCoordinator(BaseWundergroundPWSCoordinator):
                         self._excluded_stations.add(station.pws_id)
                         _LOGGER.warning(f"Station {station.pws_id} excluded after {self._max_consecutive_failures} consecutive HTTP 204 responses. Will retry after restart.")
                     else:
-                        _LOGGER.error(
+                        # An offline station answers 204 on every poll; only the exclusion is worth a warning
+                        _LOGGER.debug(
                             f"Failed to fetch data from station {station.pws_id} "
                             f"({self._station_failures[station.pws_id]}/{self._max_consecutive_failures} due to HTTP 204): {err}"
                         )
